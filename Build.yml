@@ -1,0 +1,73 @@
+name: Build APK from GitHub repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Repository in owner/name format (for example octocat/Hello-World)"
+        required: true
+        type: string
+      ref:
+        description: "Branch, tag, or commit (leave blank for default branch)"
+        required: false
+        type: string
+      gradle_task:
+        description: "Gradle task to run"
+        required: true
+        default: "assembleDebug"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Checkout target Android project
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          path: target-project
+          # For a private target repository, add a GH_PAT repository secret.
+          # It should have read-only Contents permission on the target repository.
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: accept android sdk licenses
+        shell: cmd
+        run: echo y | sdkmanager --licenses
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: target-project
+        env:
+          GRADLE_TASK: ${{ inputs.gradle_task }}
+        shell: pwsh
+        run: |
+          if (Test-Path .\gradlew.bat) {
+            .\gradlew.bat --no-daemon $env:GRADLE_TASK
+          } else {
+            Write-Error "Target repository has no Gradle wrapper (gradlew.bat)."
+            Write-Error "For reproducible builds, include the Gradle wrapper in the target repository."
+            exit 1
+          }
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-apk-compiler-${{ github.run_number }}
+          path: target-project/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
